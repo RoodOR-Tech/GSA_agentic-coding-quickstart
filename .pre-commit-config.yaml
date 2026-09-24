@@ -88,3 +88,17 @@ repos:
         entry: bash -c 'printf "%s\n" "$@" | xargs -r -n8 shellcheck --severity=warning' --
         language: system
         files: '^test/bats/.*\.(bats|bash)$'
+
+      # Enforce AGENTS.md's "Durable References" / "Fully Qualify Issue/PR
+      # References" rules on newly STAGED lines (see ADR-0030). Checks only
+      # what `git diff --cached` shows, so it is a deliberate no-op when
+      # nothing is staged (e.g. under `pre-commit run --all-files` in CI,
+      # which is a fresh checkout with an empty index) — the actual CI gate
+      # for pull requests is the separate durable-references.yml workflow,
+      # which diffs a PR's head against its base instead.
+      - id: check-durable-references
+        name: durable references (no bare/qualified issue refs in new lines)
+        entry: scripts/check-durable-references --cached
+        language: system
+        pass_filenames: true
+        files: '\.(md|sh)$|^acq$'

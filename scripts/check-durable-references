@@ -1,0 +1,194 @@
+#!/usr/bin/env bash
+# check-durable-references — enforce AGENTS.md's "Durable References" and
+# "Fully Qualify Issue/PR References" sections as an automated check, instead
+# of trusting that whoever (human or agent) wrote a line of durable content
+# actually read and followed that prose.
+#
+# The rule (see AGENTS.md "Durable References: Cross-Link Code, Docs, and
+# ADRs — Not Trackers"): code comments and docs/ADR prose must not rely on a
+# GitHub issue/PR reference — bare (#NNN), shorthand (quickstart#NNN), or a
+# full github.com/.../issues/233 URL — to carry meaning. The durable homes are
+# ADRs and docs (prose, optionally citing "see ADR-000N") and code/tests.
+# Allowed exceptions: an ADR's own "## Links" section, CHANGELOG.md (release
+# automation), and this project's own AGENTS.md (which cites #NNN-style
+# patterns as examples while explaining the rule, not as durable pointers).
+#
+# WHY DIFF-SCOPED, NOT WHOLE-FILE: this codebase has years of pre-existing
+# inline issue citations (acq.backends/*.sh, docs/adr/*.md bodies,
+# KNOWN_FAILURE_MODES.md, ...) that predate this check. Scanning whole files
+# would fail CI on content nobody touched and require an unrelated mass
+# cleanup before this check could ship at all. Instead this script only looks
+# at ADDED lines in a diff — a ratchet: new violations are caught, the
+# existing backlog is grandfathered (tracked in docs/KNOWN_FAILURE_MODES.md
+# and ADR-0030) rather than silently ignored.
+#
+# Usage:
+#   check-durable-references --cached [FILE...]
+#   check-durable-references --against REF [FILE...]
+#
+#   --cached      Check lines added relative to the git index (what a
+#                 `git commit` is about to record). Used by the local
+#                 pre-commit hook. With nothing staged (e.g. a fresh checkout
+#                 under `pre-commit run --all-files` in CI) this is a
+#                 deliberate no-op — see ADR-0030.
+#   --against REF Check lines added relative to the merge-base of REF and
+#                 HEAD. Used by CI to gate a pull request's own changes
+#                 against its base branch.
+#
+# With no FILE args, discovers changed files itself from the same diff.
+#
+# Escape hatch for a deliberate, reviewed exception: add the literal marker
+# `durable-ref-ok` on the line (in a comment) and it is skipped.
+set -u
+
+usage() {
+  cat >&2 <<'EOF'
+Usage:
+  check-durable-references --cached [FILE...]
+  check-durable-references --against REF [FILE...]
+EOF
+}
+
+mode=""
+ref=""
+case "${1:-}" in
+  --cached)
+    mode=cached
+    shift
+    ;;
+  --against)
+    if [ "$#" -lt 2 ]; then
+      echo "check-durable-references: --against requires REF" >&2
+      usage
+      exit 2
+    fi
+    mode=against
+    ref="$2"
+    shift 2
+    ;;
+  -h | --help)
+    usage
+    exit 0
+    ;;
+  *)
+    usage
+    exit 2
+    ;;
+esac
+
+# diff_of FILE — the -U0 diff for one file in the selected mode.
+diff_of() {
+  case "$mode" in
+    cached)
+      git diff --cached -U0 -- "$1"
+      ;;
+    against)
+      git diff -U0 "$(git merge-base "$ref" HEAD)" HEAD -- "$1"
+      ;;
+  esac
+}
+
+# changed_files — every added/copied/modified file in the selected diff.
+changed_files() {
+  case "$mode" in
+    cached)
+      git diff --cached --name-only --diff-filter=ACM
+      ;;
+    against)
+      git diff --name-only --diff-filter=ACM "$(git merge-base "$ref" HEAD)" HEAD
+      ;;
+  esac
+}
+
+files=()
+if [ "$#" -gt 0 ]; then
+  files=("$@")
+else
+  while IFS= read -r _f; do
+    [ -n "$_f" ] && files+=("$_f")
+  done < <(changed_files)
+fi
+
+# Files exempt entirely. CHANGELOG.md is release-please-generated; AGENTS.md
+# is this project's own rule text and uses #NNN as a pattern example while
+# explaining the rule, not as a durable pointer.
+is_exempt_file() {
+  case "$1" in
+    CHANGELOG.md | AGENTS.md) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Tracker-reference pattern: a GitHub issue/PR URL, an owner/repo#N or
+# name#N shorthand, or a bare #N — but NOT a same-doc markdown anchor link
+# (e.g. #14-some-heading-slug), which is followed by a hyphen rather than a
+# word boundary. Known limitation: a purely numeric hex color (#1a2b3c) with
+# exactly digit runs that also happen to look like an issue number can
+# false-positive; none of this repo's docs use bare numeric hex, so this is
+# accepted rather than engineered around.
+PATTERN='github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/(issues|pull)/[0-9]+|[A-Za-z][A-Za-z0-9_./-]*#[0-9]+([^0-9A-Za-z_-]|$)|(^|[^0-9A-Za-z_/-])#[0-9]+([^0-9A-Za-z_-]|$)'
+
+fail=0
+for f in ${files[@]+"${files[@]}"}; do
+  [ -f "$f" ] || continue
+  is_exempt_file "$f" && continue
+
+  in_links_section=0
+  while IFS= read -r line; do
+    case "$line" in
+      +++*)
+        continue
+        ;;
+      +*)
+        body="${line#+}"
+        ;;
+      *)
+        continue
+        ;;
+    esac
+
+    case "$body" in
+      *durable-ref-ok*) continue ;;
+    esac
+
+    # Best-effort ADR "## Links" section exemption: only catches a Links
+    # section that is itself part of THIS diff (i.e. the heading line was
+    # added/touched too). Editing an existing Links section without touching
+    # its heading needs the durable-ref-ok escape hatch instead. See ADR-0030.
+    case "$f" in
+      docs/adr/*.md)
+        case "$body" in
+          '## Links'*) in_links_section=1 ;;
+        esac
+        [ "$in_links_section" -eq 1 ] && continue
+        ;;
+    esac
+
+    if printf '%s\n' "$body" | grep -qE "$PATTERN"; then
+      trimmed="${body#"${body%%[![:space:]]*}"}"
+      echo "durable-reference: $f: $trimmed" >&2
+      fail=1
+    fi
+  done < <(diff_of "$f")
+done
+
+if [ "$fail" -ne 0 ]; then
+  cat >&2 <<'EOF'
+
+One or more added lines rely on a GitHub issue/PR reference to carry meaning
+in durable content (code comments, docs, or ADR body prose). Per AGENTS.md
+"Durable References": rewrite as prose, and cite an ADR (e.g. "see ADR-0015")
+if one applies.
+
+Allowed homes for a tracker reference: an ADR's own "## Links" section,
+CHANGELOG.md, and (for the ephemeral contexts the rule permits) commit
+messages / PR descriptions — fully qualified, per "Fully Qualify Issue/PR
+References in Anything Durable".
+
+Reviewed, deliberate exception? Add the literal marker `durable-ref-ok` on
+the line.
+EOF
+  exit 1
+fi
+
+exit 0

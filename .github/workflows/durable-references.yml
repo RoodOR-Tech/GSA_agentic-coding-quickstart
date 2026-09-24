@@ -1,0 +1,40 @@
+# Durable References — gates a pull request's OWN added lines against
+# AGENTS.md's "Durable References" / "Fully Qualify Issue/PR References"
+# rules (see ADR-0030 and scripts/check-durable-references).
+#
+# This is intentionally separate from the pre-commit.yml "lint everything"
+# job: this repo has years of pre-existing inline issue citations that
+# predate the rule being enforced at all, and a whole-file scan would fail
+# every PR on content nobody touched. Diffing against the PR's base branch
+# instead only checks what the PR itself adds — a ratchet, not a retroactive
+# cleanup requirement.
+
+name: Durable References
+
+on:
+  pull_request:
+    branches:
+      - main
+
+concurrency:
+  group: durable-references-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Check added lines for tracker references
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+          # Full history so `git merge-base` (used by check-durable-references)
+          # can find the PR base commit.
+          fetch-depth: 0
+
+      - name: check-durable-references
+        run: scripts/check-durable-references --against "${{ github.event.pull_request.base.sha }}"

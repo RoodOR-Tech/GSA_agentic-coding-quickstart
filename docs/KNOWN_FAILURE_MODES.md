@@ -3,7 +3,7 @@ title: "Known Failure Modes"
 description: "Real-world failure patterns when using Docker SBX + USAi + agent frameworks"
 status: canonical
 tier: 2
-last_updated: "2026-08-25"
+last_updated: "2026-09-24"
 audience: "developers"
 keywords: ["debugging", "troubleshooting", "sbx", "usai", "failures"]
 ---
@@ -2201,6 +2201,59 @@ amending the wrong branch.
   encrypts at rest with DPAPI; see ADR-0028), and symlink-based tests cannot pass
   without native symlinks. None are regressions from the Windows preview path;
   validate that path with the checklist in `docs/howto/acq.md`.
+
+---
+
+## 40. AGENTS.md's "Durable References" Rule Was Unenforced (Deferred Cleanup)
+
+### Symptoms
+
+None at runtime — this is a documentation/process gap, not a bug. Recorded
+here per AGENTS.md's own "Track Deferred Work" rule, which requires every
+identified follow-up to be captured durably rather than left as an
+unrecorded `TODO`.
+
+### Root Cause
+
+AGENTS.md's "Durable References" and "Fully Qualify Issue/PR References"
+sections say code comments, docs, and ADR body prose must not rely on a
+GitHub issue/PR reference to carry meaning, but nothing ever checked it.
+`scripts/check-durable-references` (ADR-0030) now gates **new** additions in
+CI and via a local pre-commit hook, but it is diff-scoped on purpose and does
+not touch pre-existing content. As of this writing, the pre-existing backlog
+includes bare/qualified issue references in prose bodies (outside an ADR's
+own `## Links` section) in at least:
+
+- `acq.backends/common.sh`, `acq.backends/kit-translate.sh`,
+  `acq.backends/msb.sh`, `acq.backends/sbx.sh`, `acq.backends/secret-store.sh`,
+  `acq.backends/progress.sh`, `acq`
+- `docs/adr/0002-*.md`, `0005-*.md`, `0006-*.md`, `0007-*.md`, `0008-*.md`,
+  `0009-*.md`, `0011-*.md`, `0014-*.md`, `0015-*.md`, `0020-*.md`,
+  `0021-*.md`, `0023-*.md` (references in the body, not the Links section)
+- `docs/KNOWN_FAILURE_MODES.md` (this file), `docs/explorations/acq-design.md`,
+  `docs/explorations/acq-handoff-2.0.md`, `docs/howto/acq.md`,
+  `docs/howto/sbx.md`, `CONTRIBUTING.md`, `scripts/verify-issue-320`
+  (filename itself), `scripts/test-acq-lib.sh`, `scripts/verify-backends`
+
+### Fix / Status
+
+No mass cleanup is planned in the change that added this entry (ADR-0030) —
+rewriting dozens of citations across the tree in one pass is a large,
+separate effort with its own review risk, not a byproduct of adding the
+check. The trigger to unblock this work: **the next time any of the files
+above is touched for an unrelated reason, rewrite the tracker reference it
+contains as prose (citing an ADR instead, where one exists) as part of that
+change**, rather than leaving it for a dedicated cleanup PR that may never
+get prioritized. `check-durable-references` will keep the fixed line from
+regressing once it's touched.
+
+### Remaining Work
+
+- [ ] Opportunistic: reword each pre-existing reference above to prose (or an
+      ADR cross-link) the next time its file is edited.
+- [ ] Optional: once the backlog is small enough, switch
+      `scripts/check-durable-references` from diff-scoped to whole-file
+      scanning for full enforcement, and remove this entry.
 
 ---
 
