@@ -310,6 +310,8 @@ Step 1. On a managed device, ask your IT administrator to enable it.
 
 ## Learn More
 
+- **Building something with Claude specifically? Start here:**
+  [docs/howto/claude.md](docs/howto/claude.md)
 - **How it works, customizing, extra kits, optional integrations (web UI, editors):**
   [docs/CONCEPTS.md](docs/CONCEPTS.md)
 - **Deeper `acq` how-to, backend selection, manual install, Windows preview validation:**
